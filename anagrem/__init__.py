@@ -184,7 +184,12 @@ class Client(object, metaclass=ClientType):
                 self.write_request(sock, self.PRE_SLEEP)
 
             while server_sockets:
-                read_ready, _, errored = select(server_sockets, (), server_sockets)
+                try:
+                    read_ready, _, errored = select(server_sockets, (), server_sockets)
+                except KeyboardInterrupt:
+                    for sock in server_sockets:
+                        sock.close()
+                    return
 
                 for sock in errored:
                     log.debug("Server socket reported error, closing bad connection")
