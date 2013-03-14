@@ -9,7 +9,6 @@ import struct
 import time
 
 from django.conf import settings
-#import gearman
 
 
 tasks = dict()
@@ -100,7 +99,9 @@ class Client(object, metaclass=ClientType):
         sock.sendall(data)
 
     def read_response(self, sock):
-        header = sock.recv(12)
+        header = b''
+        while len(header) < 12:
+            header += sock.recv(12 - len(header))
         response_head, response_type, len_args = struct.unpack('!4sII', header)
 
         if response_head != b'\x00RES':
