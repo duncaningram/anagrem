@@ -7,6 +7,7 @@ from select import select
 import socket
 import struct
 import time
+import traceback
 
 from django.conf import settings
 
@@ -219,8 +220,11 @@ class Client(object, metaclass=ClientType):
                             func = tasks[funcname]
                             ret_data = func.work(data)
                         except Exception as exc:
-                            log.debug("Job %s ended in a %s exception", handle, type(exc).__name__)
-                            self.write_request(sock, self.WORK_EXCEPTION, str(exc).encode('utf8'))
+                            log.warning("Job %s ended in a %s exception", handle, type(exc).__name__)
+                            if log.isEnabledFor(logging.DEBUG):
+                                log.debug("%s", traceback.format_exc())
+                            self.write_request(sock, self.WORK_EXCEPTION, handle, str(exc).encode('utf8'))
+                            self.write_request(sock, self.WORK_FAIL, handle)
                         else:
                             log.debug("Job %s completed successfully", handle)
                             self.write_request(sock, self.WORK_COMPLETE, handle, ret_data)
