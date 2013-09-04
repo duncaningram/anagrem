@@ -156,9 +156,11 @@ class Client(object, metaclass=ClientType):
 
     def get_status(self, handle):
         response_type, args = self.request(self.GET_STATUS, handle, expect=self.STATUS_RES)
+        log = logging.getLogger('anagrem.client')
+        log.debug("Got STATUS_RES response args %r", args)
         handle, known, running, numerator, denominator = args
-        known = known != b'\x00'
-        running = running != b'\x00'
+        known = known != b'0'
+        running = running != b'0'
         return known, running, int(numerator), int(denominator)
 
     def work(self):
@@ -267,3 +269,14 @@ def task(fn):
 @task
 def moose():
     return {'moose': True}
+
+
+@task
+def waitmoose():
+    time.sleep(60)
+    return {'moose': True}
+
+
+@task
+def failmoose():
+    raise NotImplementedError()
