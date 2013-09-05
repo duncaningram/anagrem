@@ -9,11 +9,6 @@ import struct
 import time
 import traceback
 
-from django.conf import settings
-
-
-tasks = dict()
-
 
 class GearmanError(Exception):
     pass
@@ -92,6 +87,7 @@ class Client(object, metaclass=ClientType):
 
     def __init__(self, servers):
         self.servers = servers
+        self.tasks = dict()
 
     def write_request(self, sock, packet_type, *args):
         data = b'\x00'.join(args)
@@ -182,7 +178,7 @@ class Client(object, metaclass=ClientType):
                 raise GearmanError("Could not connect to any servers")
 
             for sock in server_sockets:
-                for funcname in tasks.keys():
+                for funcname in self.tasks.keys():
                     self.write_request(sock, self.CAN_DO, funcname.encode('ascii'))
                 self.write_request(sock, self.PRE_SLEEP)
 
@@ -219,7 +215,7 @@ class Client(object, metaclass=ClientType):
 
                         try:
                             funcname = funcname.decode('ascii')
-                            func = tasks[funcname]
+                            func = self.tasks[funcname]
                             ret_data = func.work(data)
                         except Exception as exc:
                             log.warning("Job %s ended in a %s exception", handle, type(exc).__name__)
@@ -246,37 +242,20 @@ class Client(object, metaclass=ClientType):
 
             log.debug("Ran out of server sockets, let's start over from the top")
 
+    def task(self, fn):
+        client = self
+        taskname = '.'.join((fn.__module__, fn.__name__))
+        self.tasks[taskname] = fn
 
-def task(fn):
-    taskname = '.'.join((fn.__module__, fn.__name__))
-    tasks[taskname] = fn
+        def post(**kwargs):
+            taskdata = json.dumps(kwargs).encode('utf8')
+            return client.submit_job(taskname.encode('ascii'), taskdata)
+        fn.post = post
 
-    def post(**kwargs):
-        taskdata = json.dumps(kwargs).encode('utf8')
-        cl = Client(settings.GEARMAN_SERVERS)
-        return cl.submit_job(taskname.encode('ascii'), taskdata)
-    fn.post = post
+        def work(data):
+            kwargs = json.loads(data.decode('utf8'))
+            ret = fn(**kwargs)
+            return json.dumps(ret).encode('utf8')
+        fn.work = work
 
-    def work(data):
-        kwargs = json.loads(data.decode('utf8'))
-        ret = fn(**kwargs)
-        return json.dumps(ret).encode('utf8')
-    fn.work = work
-
-    return fn
-
-
-@task
-def moose():
-    return {'moose': True}
-
-
-@task
-def waitmoose():
-    time.sleep(60)
-    return {'moose': True}
-
-
-@task
-def failmoose():
-    raise NotImplementedError()
+        return fn
