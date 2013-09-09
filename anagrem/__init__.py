@@ -160,7 +160,17 @@ class Client(object, metaclass=ClientType):
         running = running != b'0'
         return known, running, int(numerator), int(denominator)
 
-    def work(self):
+    def work(self, shirk=False):
+        """Connect to all known servers and work known jobs from them.
+
+        If `shirk` is ``True``, after working a job the worker will report to
+        that server it can no longer do jobs of that type. In some cases this
+        can prevent the worker from doing one type of job to the exclusion of
+        others, starving out other queues of work. Once no more jobs are
+        available from that server, the worker again reports all registered
+        task types, so the worker can eventually do all available work.
+
+        """
         log = logging.getLogger('anagrem.worker')
         while True:
             server_sockets = set()
@@ -206,7 +216,12 @@ class Client(object, metaclass=ClientType):
                         continue
 
                     if packet_type == self.NO_JOB:
-                        log.debug("Hmm, no job, ask the server to wait for one")
+                        if shirk:
+                            log.debug("Hmm, no job, reset our willingness to work and wait for one")
+                            for funcname in self.tasks.keys():
+                                self.write_request(sock, self.CAN_DO, funcname.encode('ascii'))
+                        else:
+                            log.debug("Hmm, no job, ask the server to wait for one")
                         self.write_request(sock, self.PRE_SLEEP)
                         continue
 
@@ -215,8 +230,8 @@ class Client(object, metaclass=ClientType):
                         log.debug("Yay, got job %s!", handle)
 
                         try:
-                            funcname = funcname.decode('ascii')
-                            func = self.tasks[funcname]
+                            funcname_str = funcname.decode('ascii')
+                            func = self.tasks[funcname_str]
                             ret_data = func.work(data)
                         except Exception as exc:
                             log.warning("Job %s ended in a %s exception", handle, type(exc).__name__)
@@ -228,6 +243,9 @@ class Client(object, metaclass=ClientType):
                             log.debug("Job %s completed successfully", handle)
                             self.write_request(sock, self.WORK_COMPLETE, handle, ret_data)
 
+                        # Get a different sort of job for a while.
+                        if shirk:
+                            self.write_request(sock, self.CANT_DO, funcname)
                         # Ask for another to get us back on the NOOP/NO_JOB track.
                         self.write_request(sock, self.GRAB_JOB)
                         continue
