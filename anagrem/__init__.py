@@ -90,6 +90,7 @@ class Client(object, metaclass=ClientType):
         self.tasks = dict()
 
     def write_request(self, sock, packet_type, *args):
+        logging.getLogger('anagrem.request').debug('%r %r %r', sock, packet_type, args)
         data = b'\x00'.join(args)
         header = struct.pack('!B3sII', 0, b'REQ', packet_type, len(data))
         sock.sendall(header)
