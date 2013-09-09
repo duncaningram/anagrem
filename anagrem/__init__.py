@@ -10,6 +10,9 @@ import time
 import traceback
 
 
+LOW_PRIORITY, NORMAL_PRIORITY, HIGH_PRIORITY = object(), object(), object()
+
+
 class GearmanError(Exception):
     pass
 
@@ -145,9 +148,18 @@ class Client(object, metaclass=ClientType):
 
             return response_type, args
 
-    def submit_job(self, name, data):
+    def submit_job(self, name, data, level=NORMAL_PRIORITY):
         # TODO: support other job orientations
-        response_type, args = self.request(self.SUBMIT_JOB_BG, name, b'', data, expect=self.JOB_CREATED)
+        if level is LOW_PRIORITY:
+            packet_type = self.SUBMIT_JOB_LOW_BG
+        elif level is NORMAL_PRIORITY:
+            packet_type = self.SUBMIT_JOB_BG
+        elif level is HIGH_PRIORITY:
+            packet_type = self.SUBMIT_JOB_HIGH_BG
+        else:
+            raise ValueError("Unknown job level %r", level)
+
+        response_type, args = self.request(packet_type, name, b'', data, expect=self.JOB_CREATED)
         (handle,) = args
         return handle
 
@@ -229,10 +241,12 @@ class Client(object, metaclass=ClientType):
                         handle, funcname, data = args
                         log.debug("Yay, got job %s!", handle)
 
+                        funcname_str = funcname.decode('ascii')
+                        func = self.tasks[funcname_str]
                         try:
-                            funcname_str = funcname.decode('ascii')
-                            func = self.tasks[funcname_str]
-                            ret_data = func.work(data)
+                            kwargs = json.loads(data.decode('utf8'))
+                            ret = func(**kwargs)
+                            ret_data = json.dumps(ret).encode('utf8')
                         except Exception as exc:
                             log.warning("Job %s ended in a %s exception", handle, type(exc).__name__)
                             if log.isEnabledFor(logging.DEBUG):
@@ -266,15 +280,13 @@ class Client(object, metaclass=ClientType):
         taskname = '.'.join((fn.__module__, fn.__name__))
         self.tasks[taskname] = fn
 
-        def post(**kwargs):
-            taskdata = json.dumps(kwargs).encode('utf8')
-            return client.submit_job(taskname.encode('ascii'), taskdata)
-        fn.post = post
+        def submit_job(data, level=NORMAL_PRIORITY):
+            data = json.dumps(data).encode('utf8')
+            return client.submit_job(taskname.encode('ascii'), data, level=level)
+        fn.submit_job = submit_job
 
-        def work(data):
-            kwargs = json.loads(data.decode('utf8'))
-            ret = fn(**kwargs)
-            return json.dumps(ret).encode('utf8')
-        fn.work = work
+        def post(**kwargs):
+            return fn.submit_job(kwargs)
+        fn.post = post
 
         return fn
