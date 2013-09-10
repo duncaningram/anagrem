@@ -13,6 +13,10 @@ import traceback
 LOW_PRIORITY, NORMAL_PRIORITY, HIGH_PRIORITY = object(), object(), object()
 
 
+# Prevent the super verbose socket debugging unless explicitly enabled.
+logging.getLogger('anagrem.request').propagate = False
+
+
 class GearmanError(Exception):
     pass
 
