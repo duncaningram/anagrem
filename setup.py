@@ -5,7 +5,7 @@ setup(
     name='anagrem',
     version='1.0',
     description='a simple Gearman client (in pure Python 3)',
-    packages=['anagrem'],
+    packages=['anagrem', 'anagrem.management', 'anagrem.management.commands'],
 
     author='Mark Paschal',
     author_email='markpasc@markpasc.org',
