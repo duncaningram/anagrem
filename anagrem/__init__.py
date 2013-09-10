@@ -19,6 +19,13 @@ class GearmanError(Exception):
 
 class ClientType(type):
 
+    """Metaclass for the `Client` class.
+
+    This metaclass automatically assigns several mappings of Gearman protocol
+    information for use in the `Client` class.
+
+    """
+
     def __new__(cls, name, bases, namespace):
         packet_type_doc = """
         #   Name                Args  Magic  Type
@@ -88,11 +95,15 @@ class ClientType(type):
 
 class Client(object, metaclass=ClientType):
 
+    """A Gearman client."""
+
     def __init__(self, servers):
         self.servers = servers
         self.tasks = dict()
 
     def write_request(self, sock, packet_type, *args):
+        """Write a request with the given Gearman packet type and data
+        arguments to the given server socket."""
         logging.getLogger('anagrem.request').debug('%r %r %r', sock, packet_type, args)
         data = b'\x00'.join(args)
         header = struct.pack('!B3sII', 0, b'REQ', packet_type, len(data))
@@ -100,6 +111,16 @@ class Client(object, metaclass=ClientType):
         sock.sendall(data)
 
     def read_response(self, sock):
+        """Read a Gearman packet response from the given server socket.
+
+        The given socket should be ready to read from. `read_response()` will
+        block until a full Gearman response packet can be read.
+
+        The response is returned as a 2-tuple of the packet type and the
+        response arguments (as a list or empty tuple). If the response packet
+        is malformed, a `GearmanError` is raised.
+
+        """
         header = b''
         while len(header) < 12:
             header += sock.recv(12 - len(header))
@@ -121,6 +142,13 @@ class Client(object, metaclass=ClientType):
         return response_type, args
 
     def connect(self):
+        """Connects to the first available of the configured servers and
+        returns its socket.
+
+        If no connection to one of the configured servers can be established, a
+        `GearmanError` is raised.
+
+        """
         # TODO: pool/persist connections
         for server in self.servers:
             host, port = server
@@ -131,6 +159,19 @@ class Client(object, metaclass=ClientType):
         raise GearmanError('Could not connect to any servers')
 
     def request(self, packet_type, *args, expect=None):
+        """Send the given Gearman packet to one of the client's configured
+        servers.
+
+        If `expect` is a packet type or sequence of packet types, a response to
+        the sent packet is read from the server immediately. The response is
+        returned as a 2-tuple of packet type and args (as a sequence). If the
+        response is not of the given packet type or types, a `GearmanError` is
+        raised.
+
+        If `expect` is `None` (the default), no response is read and no value
+        is returned.
+
+        """
         with self.connect() as conn:
             self.write_request(conn, packet_type, *args)
 
@@ -149,7 +190,17 @@ class Client(object, metaclass=ClientType):
             return response_type, args
 
     def submit_job(self, name, data, level=NORMAL_PRIORITY):
-        # TODO: support other job orientations
+        """Submit a job with the given funcname and job data (both `bytes`).
+
+        If `level` is specified as `anagrem.LOW_PRIORITY` or
+        `anagrem.HIGH_PRIORITY`, the job is submitted as a low or high priority
+        job with ``SUBMIT_JOB_LOW_BG`` or ``SUBMIT_JOB_HIGH_BG`` respectively.
+        If `level` is `anagrem.NORMAL_PRIORITY` (the default) the job is
+        submitted normally (``SUBMIT_JOB_BG``).
+
+        The job handle of the submitted job is returned.
+
+        """
         if level is LOW_PRIORITY:
             packet_type = self.SUBMIT_JOB_LOW_BG
         elif level is NORMAL_PRIORITY:
@@ -164,6 +215,15 @@ class Client(object, metaclass=ClientType):
         return handle
 
     def get_status(self, handle):
+        """Get and return the status of the given job handle from the first
+        available server (which may not be the one to which the job handle was
+        posted).
+
+        The job status -- whether the server knows the job, whether it's
+        running, and the numerator and denominator of progress as reported by
+        the worker -- are returned as a (`bool`, `bool`, `int`, `int`) tuple.
+
+        """
         response_type, args = self.request(self.GET_STATUS, handle, expect=self.STATUS_RES)
         log = logging.getLogger('anagrem.client')
         log.debug("Got STATUS_RES response args %r", args)
@@ -276,6 +336,21 @@ class Client(object, metaclass=ClientType):
             log.debug("Ran out of server sockets, let's start over from the top")
 
     def task(self, fn):
+        """Decorate the given function as a job for this client instance.
+
+        `task()` registers the function as a job by fully qualified package
+        name. Two convenience methods are added to `fn` for posting jobs using
+        it:
+
+        * `post(**kwargs)`: post a job that calls `fn` with the given keyword
+          arguments.
+        * `submit_job(data, level=anagrem.NORMAL_PRIORITY)`: post a job that
+          calls `fn` with values in a dictionary `data` as keyword arguments.
+          The job is posted with the given priority level:
+          `anagrem.LOW_PRIORITY`, `anagrem.HIGH_PRIORITY` or
+          `anagrem.NORMAL_PRIORITY` (the default).
+
+        """
         client = self
         taskname = '.'.join((fn.__module__, fn.__name__))
         self.tasks[taskname] = fn
